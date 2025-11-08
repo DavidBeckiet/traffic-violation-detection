@@ -91,7 +91,7 @@ if uploaded_video:
                     for file in detected_plates:
                         img_path = os.path.join(violations_dir, file)
                         st.image(img_path, caption=file, use_column_width=True)
-                    st.metric("🚨 Tổng số vi phạm", len(latest_violations))
+                    
                 else:
                     st.success("✅ Chưa phát hiện vi phạm nào.")
 

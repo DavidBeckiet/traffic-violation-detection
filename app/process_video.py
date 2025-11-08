@@ -45,9 +45,11 @@ def check_violation(label, box, plate, light_state, stopline_y, roi_polygon):
     # Giảm nhiễu - xe sát vạch không tính
     tolerance = 15
     if CAMERA_DIRECTION_UP:
-        return y1 <= stopline_y - tolerance
+        # ✅ Đuôi xe vượt vạch (xe chạy từ dưới lên)
+        return y2 <= stopline_y - tolerance
     else:
-        return y2 >= stopline_y + tolerance
+        # ✅ Đuôi xe vượt vạch (xe chạy từ trên xuống)
+        return y1 >= stopline_y + tolerance
 
 
 # ==========================
@@ -71,12 +73,9 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
     frame_count = 0
-    violated_vehicles = set()  # danh sách xe đã vi phạm
-    total_detected = 0         # tổng số xe phát hiện
-    total_violations = 0       # tổng số vi phạm
+    violated_vehicles = set()
 
     while True:
-        # Nếu người dùng ấn nút dừng trong GUI
         if stop_flag and stop_flag.is_set():
             print("🛑 Dừng xử lý video theo yêu cầu người dùng.")
             break
@@ -100,7 +99,6 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
 
         # Phát hiện phương tiện
         vehicles = detect_vehicles(frame)
-        total_detected = len(vehicles)
 
         for label, box, conf in vehicles:
             x1, y1, x2, y2 = map(int, box)
@@ -118,23 +116,13 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                 vehicle_id = plate or f"{label}_{x1}_{y1}"
                 if vehicle_id not in violated_vehicles:
                     violated_vehicles.add(vehicle_id)
-                    total_violations += 1
 
-                    # Ghi dấu và lưu ảnh
+                    # Lưu ảnh vi phạm
                     cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
                     cv2.circle(frame, (cx, cy), 6, (0, 0, 255), -1)
                     filename = os.path.join(OUTPUT_DIR, f"{vehicle_id}_{frame_count}.jpg")
                     cv2.imwrite(filename, frame)
                     print(f"🚨 Vi phạm mới: {vehicle_id} tại frame {frame_count}")
-
-        # ==============================
-        # 🧾 Hiển thị thống kê realtime
-        # ==============================
-        cv2.rectangle(frame, (20, 80), (350, 140), (0, 0, 0), -1)
-        cv2.putText(frame, f"Detected: {total_detected}", (30, 110),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        cv2.putText(frame, f"Violations: {total_violations}", (30, 135),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
         # Cập nhật GUI hoặc lưu file
         if frame_callback:
@@ -150,4 +138,3 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
     out.release()
     cv2.destroyAllWindows()
     print(f"✅ Video kết quả lưu tại: {output_path}")
-    print(f"📊 Tổng số xe phát hiện: {total_detected}, vi phạm: {total_violations}")
