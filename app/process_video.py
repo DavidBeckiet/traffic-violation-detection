@@ -7,6 +7,12 @@ from core.vehicle_detection import detect_vehicles
 from core.traffic_light_detection import detect_traffic_light
 from core.license_plate_recognition import detect_and_read_plate
 
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(BASE_DIR, "..", "output", "violations")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print(f"📁 Lưu vi phạm vào: {os.path.abspath(OUTPUT_DIR)}")
 # ==========================
 # ⚙️ Cấu hình
 # ==========================
@@ -15,7 +21,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 CAMERA_DIRECTION_UP = True
 FRAME_SKIP = 2           # bỏ qua 1 frame để tăng tốc
-TEMPORAL_WINDOW = 3      # cần ≥3 frame liên tiếp để xác nhận vi phạm
+TEMPORAL_WINDOW = 1      # cần ≥3 frame liên tiếp để xác nhận vi phạm
 RESIZE_WIDTH = 640       # giảm độ phân giải để tăng tốc YOLO
 
 # ==========================
@@ -124,8 +130,16 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         vehicles = detect_vehicles(resized_frame)
 
         for label, box, conf in vehicles:
-            # Scale lại box
+            # Scale lại box theo khung gốc
             x1, y1, x2, y2 = [int(v / scale_ratio) for v in box]
+
+            # Đảm bảo tọa độ nằm trong giới hạn frame
+            h, w = frame.shape[:2]
+            x1 = np.clip(x1, 0, w - 1)
+            x2 = np.clip(x2, 0, w - 1)
+            y1 = np.clip(y1, 0, h - 1)
+            y2 = np.clip(y2, 0, h - 1)
+
             plate = detect_and_read_plate(frame, (x1, y1, x2, y2))
             violated = check_violation(label, (x1, y1, x2, y2), light_state, stopline_y, ROI_POLYGON)
 
@@ -138,12 +152,26 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             # 🔁 Lọc theo thời gian (≥3 frame liên tiếp)
             if violated_history[vehicle_id] >= TEMPORAL_WINDOW and vehicle_id not in violated_vehicles:
                 violated_vehicles.add(vehicle_id)
-                violation_crop = frame[y1:y2, x1:x2]
-                filename = os.path.join(OUTPUT_DIR, f"{vehicle_id}_{frame_count}.jpg")
-                cv2.imwrite(filename, violation_crop)
+
+                # ✅ Lưu ảnh crop xe (nếu vùng hợp lệ)
+                if x2 > x1 and y2 > y1:
+                    violation_crop = frame[y1:y2, x1:x2]
+                    filename_crop = os.path.join(OUTPUT_DIR, f"{vehicle_id}_{frame_count}_crop.jpg")
+                    cv2.imwrite(filename_crop, violation_crop)
+                    print(f"✅ Lưu vi phạm (crop): {filename_crop}")
+                else:
+                    print(f"⚠️ Bỏ qua lưu crop cho {vehicle_id}, vùng rỗng hoặc sai tọa độ.")
+
+                # 🟥 Lưu ảnh context (toàn cảnh có highlight)
+                context = frame.copy()
+                cv2.rectangle(context, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(context, "VIOLATION", (x1, y1 - 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                filename_context = os.path.join(OUTPUT_DIR, f"{vehicle_id}_{frame_count}_context.jpg")
+                cv2.imwrite(filename_context, context)
                 print(f"🚨 Vi phạm mới: {vehicle_id} tại frame {frame_count}")
 
-            # Vẽ khung xe
+            # Vẽ khung xe realtime
             color = (0, 0, 255) if violated else (0, 255, 0)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             cv2.putText(frame, f"{label} {plate or ''}", (x1, y1 - 10),
