@@ -14,8 +14,8 @@ from core.license_plate_recognition import detect_and_read_plate
 # ==========================
 # ⚙️ Cấu hình
 # ==========================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "..", "output", "violations")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output", "violations")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 logging.basicConfig(
@@ -25,8 +25,8 @@ logging.basicConfig(
 )
 
 CAMERA_DIRECTION_UP = True
-FRAME_SKIP = 2
-TEMPORAL_WINDOW = 3
+FRAME_SKIP = 1
+TEMPORAL_WINDOW = 1
 RESIZE_WIDTH = 640
 MAX_WORKERS = 3  # số thread OCR tối đa
 
