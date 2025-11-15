@@ -1,5 +1,7 @@
 # Bỏ qua các file output
 output/
+# Bỏ qua upload
+uploads/
 # Python cache & build
 __pycache__/
 *.pyc

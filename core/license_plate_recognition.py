@@ -70,13 +70,34 @@ def read_plate_ocr(img_bgr):
     candidates = []
 
     for variant in variants:
-        result = ocr.ocr(variant, cls=True)
-        if not result:
+        try:
+            result = ocr.ocr(variant, cls=True)
+        except Exception as e:
+            print(f"[OCR] Lỗi PaddleOCR: {e}")
             continue
 
-        # Gom ký tự từ các dòng OCR
-        text = "".join([w[1][0] for line in result for w in line])
-        conf = np.mean([w[1][1] for line in result for w in line]) if result else 0.0
+        if not result or not isinstance(result, list):
+            continue
+
+        # PaddleOCR trả về cấu trúc phức tạp => cần lọc an toàn
+        texts, confs = [], []
+        for line in result:
+            if not line or not isinstance(line, list):
+                continue
+            for w in line:
+                if not isinstance(w, (list, tuple)) or len(w) < 2:
+                    continue
+                text_part, conf_part = w[1][0], w[1][1]
+                if isinstance(text_part, str):
+                    texts.append(text_part)
+                if isinstance(conf_part, (int, float)):
+                    confs.append(conf_part)
+
+        if not texts:
+            continue
+
+        text = "".join(texts)
+        conf = np.mean(confs) if confs else 0.0
 
         plate = normalize_plate(text)
         candidates.append((plate, conf))
@@ -84,9 +105,10 @@ def read_plate_ocr(img_bgr):
     if not candidates:
         return "Unknown", 0.0
 
-    # Ưu tiên biển hợp lệ có confidence cao
+    # Ưu tiên biển hợp lệ và confidence cao
     candidates.sort(key=lambda x: (is_valid_vn_plate(x[0]), x[1]), reverse=True)
     return candidates[0]
+
 
 # ==========================
 # 📸 Crop biển số từ xe (nếu chưa có detector riêng)

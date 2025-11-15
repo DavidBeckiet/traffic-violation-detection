@@ -6,11 +6,12 @@ import threading
 import queue
 import logging
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 
 from core.vehicle_detection import detect_vehicles
 from core.traffic_light_detection import detect_traffic_light
 from core.license_plate_recognition import detect_and_read_plate
+from core.bytetrack_tracker import BYTETracker
+from utils.data_logger import save_violation_record
 
 
 # ==========================
@@ -29,9 +30,7 @@ logging.basicConfig(
 
 CAMERA_DIRECTION_UP = True
 FRAME_SKIP = 1
-TEMPORAL_WINDOW = 1
 RESIZE_WIDTH = 640
-MAX_WORKERS = 3  # số thread OCR tối đa
 
 
 # ==========================
@@ -122,11 +121,11 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
     logging.info(f"🎞️ Xử lý video {video_name} ({frame_width}x{frame_height})")
     logging.info(f"🟩 Stopline tại y={stopline_y}, ROI={ROI_POLYGON.tolist()}")
 
-    output_path = os.path.join(OUTPUT_DIR, "result.mp4")
+    output_path = os.path.join(OUTPUT_DIR, f"{os.path.splitext(video_name)[0]}_result_{datetime.now():%Y%m%d_%H%M%S}.mp4")
+
     out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
 
     frame_queue = queue.Queue(maxsize=5)
-    ocr_executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
     # === Tracking dictionary ===
     active_tracks = {}
@@ -175,7 +174,7 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         if frame_count % FRAME_SKIP != 0:
             continue
 
-        # 🚦 Nhận diện đèn
+        # 🚦 Nhận diện đèn giao thông
         h, w = frame.shape[:2]
         scale_ratio = RESIZE_WIDTH / w
         resized_frame = cv2.resize(frame, (RESIZE_WIDTH, int(h * scale_ratio)))
@@ -205,22 +204,10 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             logging.warning(f"Lỗi detect_vehicles: {e}")
             vehicles = []
 
-        futures = []
         for label, box, conf in vehicles:
             x1, y1, x2, y2 = [int(v / scale_ratio) for v in box]
             if y2 <= y1 or x2 <= x1:
                 continue
-            futures.append((label, (x1, y1, x2, y2),
-                            ocr_executor.submit(detect_and_read_plate, frame, (x1, y1, x2, y2))))
-
-        for label, (x1, y1, x2, y2), future in futures:
-            if stop_flag and stop_flag.is_set():
-                break
-
-            try:
-                plate = future.result(timeout=3) or "Unknown"
-            except Exception:
-                plate = "Unknown"
 
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
@@ -236,7 +223,24 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             if matched_id is None:
                 track_id_counter += 1
                 matched_id = track_id_counter
-                active_tracks[matched_id] = {'pos': (cx, cy), 'violated': False, 'entered_roi': False}
+                active_tracks[matched_id] = {
+                    'pos': (cx, cy),
+                    'violated': False,
+                    'entered_roi': False,
+                    'plate': None,
+                    'label': label
+                }
+
+            # === OCR: chỉ đọc 1 lần duy nhất ===
+            if active_tracks[matched_id]['plate'] is None:
+                try:
+                    plate = detect_and_read_plate(frame, (x1, y1, x2, y2)) or "Unknown"
+                    active_tracks[matched_id]['plate'] = plate
+                except Exception as e:
+                    logging.warning(f"OCR lỗi cho ID {matched_id}: {e}")
+                    active_tracks[matched_id]['plate'] = "Unknown"
+            else:
+                plate = active_tracks[matched_id]['plate']
 
             in_roi = is_in_roi((x1, y1, x2, y2), ROI_POLYGON)
             if in_roi and not active_tracks[matched_id]['entered_roi']:
@@ -244,6 +248,7 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
 
             violated = check_violation(label, (x1, y1, x2, y2), light_state, stopline_y, ROI_POLYGON)
 
+            # === Xử lý ghi nhận vi phạm ===
             if (
                 violated
                 and active_tracks[matched_id]['entered_roi']
@@ -251,17 +256,33 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             ):
                 active_tracks[matched_id]['violated'] = True
                 timestamp = datetime.now().strftime("%H%M%S")
+
+                video_out_dir = os.path.join(OUTPUT_DIR, os.path.splitext(video_name)[0])
+                os.makedirs(video_out_dir, exist_ok=True)
+
                 crop = frame[y1:y2, x1:x2]
+                crop_path = os.path.join(video_out_dir, f"track{matched_id}_{timestamp}_crop.jpg")
+                context_path = os.path.join(video_out_dir, f"track{matched_id}_{timestamp}_context.jpg")
+
                 if crop.size > 0:
-                    crop_path = os.path.join(OUTPUT_DIR, f"track{matched_id}_{timestamp}_crop.jpg")
-                    context_path = os.path.join(OUTPUT_DIR, f"track{matched_id}_{timestamp}_context.jpg")
                     cv2.imwrite(crop_path, crop)
                     context = frame.copy()
                     cv2.rectangle(context, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     cv2.putText(context, "VIOLATION", (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                     cv2.imwrite(context_path, context)
-                logging.info(f"🚨 Vi phạm: Track {matched_id} | {label} | {plate}")
+
+                record = {
+                    "video": video_name,
+                    "track_id": matched_id,
+                    "vehicle_type": label,
+                    "license_plate": plate,
+                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+                    "crop_image": crop_path,
+                    "context_image": context_path
+                }
+                save_violation_record(record)
+                logging.info(f"🚨 Vi phạm: {record}")
 
             color = (0, 0, 255) if active_tracks[matched_id]['violated'] else (0, 255, 0)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -287,7 +308,6 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
 
     cap.release()
     out.release()
-    ocr_executor.shutdown(wait=False, cancel_futures=True)
     cv2.destroyAllWindows()
     logging.info(f"✅ Hoàn tất xử lý. Kết quả lưu tại: {output_path}")
 
