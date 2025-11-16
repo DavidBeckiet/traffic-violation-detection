@@ -12,7 +12,6 @@ from core.traffic_light_detection import detect_traffic_light
 from core.license_plate_recognition import detect_and_read_plate
 from utils.data_logger import save_violation_record
 
-
 # =========================
 # ⚙️ CONFIG
 # =========================
@@ -114,7 +113,6 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         (frame_width, frame_height)
     )
 
-
     # ===================
     # THREAD READ FRAMES
     # ===================
@@ -170,13 +168,10 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         if frame_count % FRAME_SKIP != 0:
             continue
 
-
         # --- Resize for YOLO ---
         h, w = frame.shape[:2]
         scale = RESIZE_WIDTH / w
         resized = cv2.resize(frame, (RESIZE_WIDTH, int(h * scale)))
-
-
 
         # ======================
         # 🚦 TRAFFIC LIGHT
@@ -194,12 +189,9 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         except:
             light_state = "unknown"
 
-
         color = (0,0,255) if light_state=="red" else ((0,255,255) if light_state=="yellow" else (0,255,0))
         cv2.putText(frame, f"Light: {light_state}", (30,50),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-
-
 
         # ======================
         # 🚗 VEHICLE DETECTION
@@ -209,10 +201,8 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         except:
             detections = []
 
-
-
         # ============================================================
-        # TRACKING + DIRECTION + STOPLINE VIOLATION LOGIC (CHUẨN)
+        # TRACKING + DIRECTION + STOPLINE VIOLATION LOGIC (FIX SIDE)
         # ============================================================
         for label, box, conf in detections:
 
@@ -220,7 +210,7 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             x1, y1, x2, y2 = [int(v / scale) for v in box]
             cx, cy = (x1+x2)//2, (y1+y2)//2
 
-            # ========== TRACK MATCH ==========
+            # TRACK MATCH
             track_id = None
             best_dist = 9999
             for tid, t in tracks.items():
@@ -236,30 +226,37 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                     "pos": (cx, cy),
                     "history": [],
                     "plate": None,
+                    "label": label,
                     "violated": False,
                     "entered": False,
                     "crossed": False,
-                    "label": label,
-                    "direction": "unknown",
-                    "last_pos": (cx, cy)
+                    "last_pos": (cx, cy),
+                    "direction": "unknown"
                 }
 
             tr = tracks[track_id]
 
-            # FIX 1 — lưu last_pos trước khi cập nhật
+            # ---- Movement tracking ----
             last_x, last_y = tr["pos"]
-
-            # FIX 2 — cập nhật pos trước khi tính movement
             tr["pos"] = (cx, cy)
 
-            # ========== MOVEMENT ==========
             dx = cx - last_x
             dy = cy - last_y
 
-            if abs(dy) < 2 and abs(dx) < 2:
+            abs_dx = abs(dx)
+            abs_dy = abs(dy)
+
+            bw = x2 - x1
+            bh = y2 - y1
+
+            horizontal_move = abs_dx > 4 and abs_dx > abs_dy * 2
+            vertical_move = abs_dy > 4
+
+            # ---- Direction rule ----
+            if not horizontal_move and not vertical_move:
                 direction = "idle"
-            elif abs(dx) > abs(dy) * 2:
-                direction = "side"        # FIX 3 — chạy ngang
+            elif horizontal_move and bw > bh * 1.6:
+                direction = "side"
             elif dy < -2:
                 direction = "up"
             elif dy > 2:
@@ -269,53 +266,39 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
 
             tr["direction"] = direction
 
-
-
-            # ============================================================
-            # ❗ FIX LOGIC VI PHẠM CHUẨN – KHÔNG BAO GIỜ DÍNH XE ĐI NGANG
-            # ============================================================
-
-            # ❌ Nếu xe đi ngang (bounding box rộng hơn cao nhiều) → bỏ qua
-            bw = x2 - x1
-            bh = y2 - y1
-            if bw > bh * 3:
-                tr["direction"] = "side"
-            else:
-                tr["direction"] = direction
-
-            # Không bao giờ vi phạm nếu đi ngang
-            if tr["direction"] == "side":
+            # 🚫 SIDE → bỏ qua hoàn toàn
+            if direction == "side":
                 continue
 
-
-            # Nhận diện biển số (1 lần)
+            # =========================================
+            # LICENSE PLATE RECOGNITION (WITH TRACK-ID)
+            # =========================================
             if tr["plate"] is None:
                 try:
-                    tr["plate"] = detect_and_read_plate(frame, (x1,y1,x2,y2))
+                    tr["plate"] = detect_and_read_plate(
+                        frame,
+                        (x1, y1, x2, y2),
+                        track_id=track_id,
+                        vehicle_label=label
+                    )
                 except:
                     tr["plate"] = "Unknown"
 
             plate = tr["plate"]
 
-
-            # Check đã vào ROI
-            in_roi = is_in_roi((x1, y1, x2, y2), ROI_POLYGON)
-            if in_roi and not tr["entered"]:
+            # ROI ENTER
+            if is_in_roi((x1, y1, x2, y2), ROI_POLYGON):
                 tr["entered"] = True
 
-
-            # Tolerance theo chiều cao vật thể
+            # STOPLINE tolerance
             tol = max(10, int((y2-y1) * 0.20))
-
 
             violated_now = False
 
             if light_state == "red" and tr["entered"]:
                 expected_dir = "up" if CAMERA_DIRECTION_UP else "down"
 
-                # ======= RULE 1: vượt stopline =======
                 if tr["direction"] == expected_dir:
-
                     if CAMERA_DIRECTION_UP:
                         if y2 <= stopline_y - tol:
                             violated_now = True
@@ -323,16 +306,12 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                         if y1 >= stopline_y + tol:
                             violated_now = True
 
-
-                # ======= RULE 2: phát hiện thực sự vượt line =======
                 if CAMERA_DIRECTION_UP:
                     if y2 < stopline_y:
                         tr["crossed"] = True
                 else:
                     if y1 > stopline_y:
                         tr["crossed"] = True
-
-
 
             # SAVE VIOLATION
             if violated_now and not tr["violated"]:
@@ -365,7 +344,6 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                 }
                 save_violation_record(record)
 
-
             # DRAW BOX
             color = (0,0,255) if tr["violated"] else (0,255,0)
             cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
@@ -377,11 +355,9 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                 color, 2
             )
 
-
         # Draw ROI + stopline
         cv2.polylines(frame, [ROI_POLYGON], True, (255,255,0), 2)
         cv2.line(frame, (0, stopline_y), (frame_width, stopline_y), (0,0,255), 3)
-
 
         if frame_callback:
             frame_callback(frame)
@@ -393,7 +369,6 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             cv2.imshow("Traffic", frame)
             if cv2.waitKey(1) == ord("q"):
                 break
-
 
     cap.release()
     out.release()
