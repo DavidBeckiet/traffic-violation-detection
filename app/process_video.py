@@ -10,13 +10,12 @@ from datetime import datetime
 from core.vehicle_detection import detect_vehicles
 from core.traffic_light_detection import detect_traffic_light
 from core.license_plate_recognition import detect_and_read_plate
-from core.bytetrack_tracker import BYTETracker
 from utils.data_logger import save_violation_record
 
 
-# ==========================
-# ⚙️ Cấu hình
-# ==========================
+# =========================
+# ⚙️ CONFIG
+# =========================
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output", "violations")
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "video_zones.json")
@@ -33,9 +32,9 @@ FRAME_SKIP = 1
 RESIZE_WIDTH = 640
 
 
-# ==========================
-# 📐 ROI mặc định
-# ==========================
+# =========================
+# 📐 DEFAULT ROI
+# =========================
 def get_dynamic_roi(frame_width, frame_height):
     top_y = int(frame_height * 0.15)
     bottom_y = int(frame_height * 0.80)
@@ -49,91 +48,78 @@ def get_dynamic_roi(frame_width, frame_height):
     ])
 
 
-# ==========================
-# 🚦 Kiểm tra ROI & vi phạm
-# ==========================
+# =========================
+# UTILITIES
+# =========================
 def is_in_roi(box, roi_polygon):
     x1, y1, x2, y2 = box
-    cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+    cx, cy = (x1 + x2)//2, (y1 + y2)//2
     return cv2.pointPolygonTest(roi_polygon, (cx, cy), False) >= 0
 
 
-def check_violation(label, box, light_state, stopline_y, roi_polygon):
-    x1, y1, x2, y2 = box
-    if light_state != "red":
-        return False
-    if not is_in_roi(box, roi_polygon):
-        return False
-    tolerance = 15
-    if CAMERA_DIRECTION_UP:
-        return y2 <= stopline_y - tolerance
-    else:
-        return y1 >= stopline_y + tolerance
-
-
-# ==========================
-# 📏 Hàm tính khoảng cách
-# ==========================
 def get_distance(p1, p2):
-    return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+    return ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2) ** 0.5
 
 
-# ==========================
-# 🎥 Xử lý video chính
-# ==========================
+
+# =========================
+# 🎥 MAIN PROCESS
+# =========================
 def process_video(video_path, display=False, frame_callback=None, save_output=True, stop_flag=None):
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        logging.error(f"❌ Không thể mở video: {video_path}")
+        logging.error("❌ Không thể mở video.")
         return None
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
 
-    # ======================
-    # 📁 Đọc ROI từ file JSON
-    # ======================
+
+    # Load ROI
     video_name = os.path.basename(video_path)
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, "r") as f:
-            video_zones = json.load(f)
+            zones = json.load(f)
     else:
-        video_zones = {}
+        zones = {}
 
-    if video_name in video_zones:
-        data = video_zones[video_name]
-        ROI_POLYGON = np.array(data["roi"], dtype=np.int32)
-        stopline_y = int(data["stop_line_y"])
-        logging.info(f"📁 Đã tải ROI & Stopline cho {video_name}")
+    if video_name in zones:
+        ROI_POLYGON = np.array(zones[video_name]["roi"], dtype=np.int32)
+        stopline_y = zones[video_name]["stop_line_y"]
     else:
         ROI_POLYGON = get_dynamic_roi(frame_width, frame_height)
         stopline_y = int(frame_height * 0.5)
-        video_zones[video_name] = {
+        zones[video_name] = {
             "roi": ROI_POLYGON.tolist(),
             "stop_line_y": stopline_y
         }
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
-            json.dump(video_zones, f, indent=4)
-        logging.info(f"🆕 Đã thêm video {video_name} vào file config.")
+            json.dump(zones, f, indent=4)
 
-    logging.info(f"🎞️ Xử lý video {video_name} ({frame_width}x{frame_height})")
-    logging.info(f"🟩 Stopline tại y={stopline_y}, ROI={ROI_POLYGON.tolist()}")
 
-    output_path = os.path.join(OUTPUT_DIR, f"{os.path.splitext(video_name)[0]}_result_{datetime.now():%Y%m%d_%H%M%S}.mp4")
+    logging.info(f"🎞️ Start: {video_name}")
 
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
+    output_path = os.path.join(
+        OUTPUT_DIR,
+        f"{os.path.splitext(video_name)[0]}_{datetime.now():%Y%m%d_%H%M%S}.mp4"
+    )
 
+    out = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (frame_width, frame_height)
+    )
+
+
+    # ===================
+    # THREAD READ FRAMES
+    # ===================
     frame_queue = queue.Queue(maxsize=5)
 
-    # === Tracking dictionary ===
-    active_tracks = {}
-    track_id_counter = 0
-
-    # ======================
-    # 🧵 Thread đọc frame
-    # ======================
     def read_frames():
         while cap.isOpened():
             if stop_flag and stop_flag.is_set():
@@ -144,22 +130,32 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
             try:
                 frame_queue.put(frame, timeout=1)
             except queue.Full:
-                continue
+                pass
         cap.release()
         frame_queue.put(None)
 
     threading.Thread(target=read_frames, daemon=True).start()
 
-    frame_count = 0
-    red_light_stable = None
-    same_light_count = 0
 
-    # ======================
-    # 🔁 Vòng lặp xử lý
-    # ======================
+    # ===================
+    # TRACKING DATA
+    # ===================
+    tracks = {}
+    track_id_counter = 0
+
+    # Light smoothing
+    stable_light = None
+    same_light_counter = 0
+
+    frame_count = 0
+
+
+    # ===================
+    # 🔁 MAIN LOOP
+    # ===================
     while True:
+
         if stop_flag and stop_flag.is_set():
-            logging.info("🛑 Dừng xử lý theo yêu cầu người dùng.")
             break
 
         try:
@@ -174,145 +170,237 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
         if frame_count % FRAME_SKIP != 0:
             continue
 
-        # 🚦 Nhận diện đèn giao thông
-        h, w = frame.shape[:2]
-        scale_ratio = RESIZE_WIDTH / w
-        resized_frame = cv2.resize(frame, (RESIZE_WIDTH, int(h * scale_ratio)))
 
+        # --- Resize for YOLO ---
+        h, w = frame.shape[:2]
+        scale = RESIZE_WIDTH / w
+        resized = cv2.resize(frame, (RESIZE_WIDTH, int(h * scale)))
+
+
+
+        # ======================
+        # 🚦 TRAFFIC LIGHT
+        # ======================
         try:
-            current_light = detect_traffic_light(resized_frame)
-            if current_light == red_light_stable:
-                same_light_count += 1
+            cur = detect_traffic_light(resized)
+            if cur == stable_light:
+                same_light_counter += 1
             else:
-                same_light_count = 0
-            light_state = current_light if same_light_count >= 3 else red_light_stable or current_light
-            red_light_stable = current_light
-        except Exception as e:
-            logging.warning(f"Lỗi detect_traffic_light: {e}")
+                same_light_counter = 0
+
+            light_state = cur if same_light_counter >= 3 else (stable_light or cur)
+            stable_light = cur
+
+        except:
             light_state = "unknown"
 
-        color_light = (0, 0, 255) if light_state == "red" else (
-            (0, 255, 255) if light_state == "yellow" else (0, 255, 0)
-        )
-        cv2.putText(frame, f"Light: {light_state.upper()}", (30, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color_light, 3)
 
-        # 🚗 Nhận diện xe
+        color = (0,0,255) if light_state=="red" else ((0,255,255) if light_state=="yellow" else (0,255,0))
+        cv2.putText(frame, f"Light: {light_state}", (30,50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+
+
+        # ======================
+        # 🚗 VEHICLE DETECTION
+        # ======================
         try:
-            vehicles = detect_vehicles(resized_frame)
-        except Exception as e:
-            logging.warning(f"Lỗi detect_vehicles: {e}")
-            vehicles = []
+            detections = detect_vehicles(resized)
+        except:
+            detections = []
 
-        for label, box, conf in vehicles:
-            x1, y1, x2, y2 = [int(v / scale_ratio) for v in box]
-            if y2 <= y1 or x2 <= x1:
-                continue
 
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
 
-            # === Tracking logic ===
-            matched_id = None
-            for tid, data in active_tracks.items():
-                dist = get_distance((cx, cy), data['pos'])
-                if dist < 60:
-                    matched_id = tid
-                    active_tracks[tid]['pos'] = (cx, cy)
-                    break
+        # ============================================================
+        # TRACKING + DIRECTION + STOPLINE VIOLATION LOGIC (CHUẨN)
+        # ============================================================
+        for label, box, conf in detections:
 
-            if matched_id is None:
+            # Scale box về size gốc
+            x1, y1, x2, y2 = [int(v / scale) for v in box]
+            cx, cy = (x1+x2)//2, (y1+y2)//2
+
+            # ========== TRACK MATCH ==========
+            track_id = None
+            best_dist = 9999
+            for tid, t in tracks.items():
+                dist = get_distance((cx, cy), t["pos"])
+                if dist < 55 and dist < best_dist:
+                    best_dist = dist
+                    track_id = tid
+
+            if track_id is None:
                 track_id_counter += 1
-                matched_id = track_id_counter
-                active_tracks[matched_id] = {
-                    'pos': (cx, cy),
-                    'violated': False,
-                    'entered_roi': False,
-                    'plate': None,
-                    'label': label
+                track_id = track_id_counter
+                tracks[track_id] = {
+                    "pos": (cx, cy),
+                    "history": [],
+                    "plate": None,
+                    "violated": False,
+                    "entered": False,
+                    "crossed": False,
+                    "label": label,
+                    "direction": "unknown",
+                    "last_pos": (cx, cy)
                 }
 
-            # === OCR: chỉ đọc 1 lần duy nhất ===
-            if active_tracks[matched_id]['plate'] is None:
-                try:
-                    plate = detect_and_read_plate(frame, (x1, y1, x2, y2)) or "Unknown"
-                    active_tracks[matched_id]['plate'] = plate
-                except Exception as e:
-                    logging.warning(f"OCR lỗi cho ID {matched_id}: {e}")
-                    active_tracks[matched_id]['plate'] = "Unknown"
+            tr = tracks[track_id]
+
+            # FIX 1 — lưu last_pos trước khi cập nhật
+            last_x, last_y = tr["pos"]
+
+            # FIX 2 — cập nhật pos trước khi tính movement
+            tr["pos"] = (cx, cy)
+
+            # ========== MOVEMENT ==========
+            dx = cx - last_x
+            dy = cy - last_y
+
+            if abs(dy) < 2 and abs(dx) < 2:
+                direction = "idle"
+            elif abs(dx) > abs(dy) * 2:
+                direction = "side"        # FIX 3 — chạy ngang
+            elif dy < -2:
+                direction = "up"
+            elif dy > 2:
+                direction = "down"
             else:
-                plate = active_tracks[matched_id]['plate']
+                direction = "idle"
 
+            tr["direction"] = direction
+
+
+
+            # ============================================================
+            # ❗ FIX LOGIC VI PHẠM CHUẨN – KHÔNG BAO GIỜ DÍNH XE ĐI NGANG
+            # ============================================================
+
+            # ❌ Nếu xe đi ngang (bounding box rộng hơn cao nhiều) → bỏ qua
+            bw = x2 - x1
+            bh = y2 - y1
+            if bw > bh * 3:
+                tr["direction"] = "side"
+            else:
+                tr["direction"] = direction
+
+            # Không bao giờ vi phạm nếu đi ngang
+            if tr["direction"] == "side":
+                continue
+
+
+            # Nhận diện biển số (1 lần)
+            if tr["plate"] is None:
+                try:
+                    tr["plate"] = detect_and_read_plate(frame, (x1,y1,x2,y2))
+                except:
+                    tr["plate"] = "Unknown"
+
+            plate = tr["plate"]
+
+
+            # Check đã vào ROI
             in_roi = is_in_roi((x1, y1, x2, y2), ROI_POLYGON)
-            if in_roi and not active_tracks[matched_id]['entered_roi']:
-                active_tracks[matched_id]['entered_roi'] = True
+            if in_roi and not tr["entered"]:
+                tr["entered"] = True
 
-            violated = check_violation(label, (x1, y1, x2, y2), light_state, stopline_y, ROI_POLYGON)
 
-            # === Xử lý ghi nhận vi phạm ===
-            if (
-                violated
-                and active_tracks[matched_id]['entered_roi']
-                and not active_tracks[matched_id]['violated']
-            ):
-                active_tracks[matched_id]['violated'] = True
-                timestamp = datetime.now().strftime("%H%M%S")
+            # Tolerance theo chiều cao vật thể
+            tol = max(10, int((y2-y1) * 0.20))
 
-                video_out_dir = os.path.join(OUTPUT_DIR, os.path.splitext(video_name)[0])
-                os.makedirs(video_out_dir, exist_ok=True)
+
+            violated_now = False
+
+            if light_state == "red" and tr["entered"]:
+                expected_dir = "up" if CAMERA_DIRECTION_UP else "down"
+
+                # ======= RULE 1: vượt stopline =======
+                if tr["direction"] == expected_dir:
+
+                    if CAMERA_DIRECTION_UP:
+                        if y2 <= stopline_y - tol:
+                            violated_now = True
+                    else:
+                        if y1 >= stopline_y + tol:
+                            violated_now = True
+
+
+                # ======= RULE 2: phát hiện thực sự vượt line =======
+                if CAMERA_DIRECTION_UP:
+                    if y2 < stopline_y:
+                        tr["crossed"] = True
+                else:
+                    if y1 > stopline_y:
+                        tr["crossed"] = True
+
+
+
+            # SAVE VIOLATION
+            if violated_now and not tr["violated"]:
+                tr["violated"] = True
+
+                ts = datetime.now().strftime("%H%M%S")
+                folder = os.path.join(OUTPUT_DIR, os.path.splitext(video_name)[0])
+                os.makedirs(folder, exist_ok=True)
 
                 crop = frame[y1:y2, x1:x2]
-                crop_path = os.path.join(video_out_dir, f"track{matched_id}_{timestamp}_crop.jpg")
-                context_path = os.path.join(video_out_dir, f"track{matched_id}_{timestamp}_context.jpg")
+                crop_path = os.path.join(folder, f"{track_id}_{ts}_crop.jpg")
+                context_path = os.path.join(folder, f"{track_id}_{ts}_context.jpg")
 
                 if crop.size > 0:
                     cv2.imwrite(crop_path, crop)
-                    context = frame.copy()
-                    cv2.rectangle(context, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(context, "VIOLATION", (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                    cv2.imwrite(context_path, context)
+                    ctx = frame.copy()
+                    cv2.rectangle(ctx, (x1,y1), (x2,y2), (0,0,255), 2)
+                    cv2.putText(ctx, "VIOLATION", (x1, y1-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+                    cv2.imwrite(context_path, ctx)
 
                 record = {
                     "video": video_name,
-                    "track_id": matched_id,
-                    "vehicle_type": label,
+                    "track_id": track_id,
+                    "vehicle_type": tr["label"],
                     "license_plate": plate,
                     "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
                     "crop_image": crop_path,
                     "context_image": context_path
                 }
                 save_violation_record(record)
-                logging.info(f"🚨 Vi phạm: {record}")
 
-            color = (0, 0, 255) if active_tracks[matched_id]['violated'] else (0, 255, 0)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{label} [{plate}] (ID:{matched_id})", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        cv2.polylines(frame, [ROI_POLYGON], True, (255, 255, 0), 2)
-        cv2.line(frame, (0, stopline_y), (frame_width, stopline_y), (0, 0, 255), 3)
+            # DRAW BOX
+            color = (0,0,255) if tr["violated"] else (0,255,0)
+            cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
+            cv2.putText(
+                frame,
+                f"{label} | {plate}",
+                (x1, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                color, 2
+            )
+
+
+        # Draw ROI + stopline
+        cv2.polylines(frame, [ROI_POLYGON], True, (255,255,0), 2)
+        cv2.line(frame, (0, stopline_y), (frame_width, stopline_y), (0,0,255), 3)
+
 
         if frame_callback:
-            try:
-                frame_callback(frame)
-            except Exception as e:
-                logging.warning(f"Lỗi callback frame: {e}")
+            frame_callback(frame)
 
         if save_output:
             out.write(frame)
 
         if display:
-            cv2.imshow("Traffic Violation Detection", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            cv2.imshow("Traffic", frame)
+            if cv2.waitKey(1) == ord("q"):
                 break
+
 
     cap.release()
     out.release()
     cv2.destroyAllWindows()
-    logging.info(f"✅ Hoàn tất xử lý. Kết quả lưu tại: {output_path}")
 
     return {
         "total_frames": frame_count,
-        "violations": [tid for tid, t in active_tracks.items() if t['violated']],
+        "violations": [tid for tid, t in tracks.items() if t["violated"]],
         "output_path": output_path
     }
