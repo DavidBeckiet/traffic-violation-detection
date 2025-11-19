@@ -37,6 +37,33 @@ VN_PATTERN = re.compile(
 )
 
 # ==========================
+# 🗺️ Vietnam Province Codes
+# ==========================
+PROVINCE_CODES = {
+    "11": "Cao Bằng", "12": "Lạng Sơn", "14": "Quảng Ninh", "15": "Hải Phòng",
+    "16": "Hải Phòng", "17": "Thái Bình", "18": "Nam Định", "19": "Phú Thọ",
+    "20": "Thái Nguyên", "21": "Yên Bái", "22": "Tuyên Quang", "23": "Hà Giang",
+    "24": "Lào Cai", "25": "Lai Châu", "26": "Sơn La", "27": "Điện Biên",
+    "28": "Hòa Bình", "29": "Hà Nội", "30": "Hà Nội", "31": "Hà Nội",
+    "32": "Hà Nội", "33": "Hà Nội", "34": "Hải Dương", "35": "Ninh Bình",
+    "36": "Thanh Hóa", "37": "Nghệ An", "38": "Hà Tĩnh", "39": "Hà Tĩnh",
+    "40": "Hà Tĩnh", "41": "Quảng Bình", "42": "Quảng Trị", "43": "Thừa Thiên Huế",
+    "47": "Đà Nẵng", "48": "Đà Nẵng", "49": "Quảng Nam", "50": "Quảng Ngãi",
+    "51": "TP.HCM", "52": "Bình Định", "53": "Phú Yên", "54": "Phú Yên",
+    "55": "Khánh Hòa", "56": "Khánh Hòa", "57": "Khánh Hòa", "58": "Ninh Thuận",
+    "59": "TP.HCM", "60": "Đồng Nai", "61": "Bình Dương", "62": "Long An",
+    "63": "Tiền Giang", "64": "Vĩnh Long", "65": "Cần Thơ", "66": "Đồng Tháp",
+    "67": "An Giang", "68": "Kiên Giang", "69": "Cà Mau", "70": "Tây Ninh",
+    "71": "Bến Tre", "72": "Bà Rịa - Vũng Tàu", "73": "Quảng Bình", "74": "Trà Vinh",
+    "75": "Hậu Giang", "76": "Đắk Lắk", "77": "Quảng Trị", "78": "Quảng Trị",
+    "79": "TP.HCM", "80": "Kon Tum", "81": "Gia Lai", "82": "Gia Lai",
+    "83": "Bình Phước", "84": "Bình Phước", "85": "Lâm Đồng", "86": "Lâm Đồng",
+    "88": "Vĩnh Phúc", "89": "Hưng Yên", "90": "Hà Nam", "92": "Quảng Ninh",
+    "93": "Bắc Ninh", "94": "Hải Dương", "95": "Hải Phòng", "97": "Bắc Giang",
+    "98": "Bắc Kạn", "99": "Bắc Kạn"
+}
+
+# ==========================
 # 🧹 Normalize plate
 # ==========================
 def normalize(text: str) -> str:
@@ -59,6 +86,20 @@ def normalize(text: str) -> str:
 
 def is_valid_vietnam_plate(text):
     return bool(VN_PATTERN.match(text))
+
+
+def extract_province(plate_text: str) -> str:
+    """Extract tỉnh thành từ biển số VN"""
+    if not plate_text or len(plate_text) < 2:
+        return "Unknown"
+    
+    # Lấy 2 số đầu
+    province_code = plate_text[:2]
+    
+    if not province_code.isdigit():
+        return "Unknown"
+    
+    return PROVINCE_CODES.get(province_code, "Unknown")
 
 
 # ==========================
@@ -165,13 +206,13 @@ def detect_and_read_plate(frame, box, track_id=None, vehicle_label="car"):
     vehicle_crop = frame[y1:y2, x1:x2]
 
     if vehicle_crop.size == 0:
-        return "Unknown"
+        return {"plate": "Unknown", "province": "Unknown"}
 
     # STEP 1 — Detect plate region
     lp_crop = detect_plate_region(vehicle_crop)
 
     if lp_crop is None:
-        return "Unknown"
+        return {"plate": "Unknown", "province": "Unknown"}
 
     # STEP 2 — OCR (YOLO + Paddle)
     plate_text, conf = best_ocr_result(lp_crop)
@@ -186,6 +227,8 @@ def detect_and_read_plate(frame, box, track_id=None, vehicle_label="car"):
             counter[p] += c
 
         final = counter.most_common(1)[0][0]
-        return final
+        province = extract_province(final)
+        return {"plate": final, "province": province}
 
-    return plate_text
+    province = extract_province(plate_text)
+    return {"plate": plate_text, "province": province}
