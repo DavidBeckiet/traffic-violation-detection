@@ -128,6 +128,12 @@ def run_detection(video_path):
         st.session_state["error"] = str(e)
     finally:
         processing_flag.clear()
+        # Clear frame queue khi dừng
+        while not frame_queue.empty():
+            try:
+                frame_queue.get_nowait()
+            except:
+                break
 
 
 # ==========================================================
@@ -177,8 +183,17 @@ with tab_realtime:
         # Stop detection
         if stop_btn and processing_flag.is_set():
             st.warning("Đang dừng xử lý video...")
+            
+            # Set stop flag
             stop_flag.set()
             processing_flag.clear()
+            
+            # Clear frame queue để unblock thread
+            while not frame_queue.empty():
+                try:
+                    frame_queue.get_nowait()
+                except:
+                    break
             
             # Đợi thread tối đa 5 giây
             if st.session_state["current_thread"] and st.session_state["current_thread"].is_alive():
@@ -186,12 +201,15 @@ with tab_realtime:
                 
                 # Nếu vẫn còn sống sau 5s
                 if st.session_state["current_thread"].is_alive():
-                    st.error("Thread không phản hồi. Có thể cần restart app.")
+                    st.error("⚠️ Thread không phản hồi - vui lòng reload trang (Ctrl+R)")
                 else:
-                    st.success("Đã dừng thành công!")
+                    st.success("✅ Đã dừng thành công!")
             
             st.session_state["current_thread"] = None
-            st.session_state["current_video_folder"] = None  # Clear folder
+            st.session_state["current_video_folder"] = None
+            
+            # Force rerun để clear UI
+            st.rerun()
 
         # Layout 70/30
         left, right = st.columns([0.70, 0.30], gap="large")

@@ -135,7 +135,7 @@ def ocr_paddle(img):
 def ocr_yolo_plate(img):
     """OCR bằng YOLO OCR model"""
     try:
-        results = lp_ocr_yolo(img)
+        results = lp_ocr_yolo(img, verbose=False)
     except:
         return None, 0.0
 
@@ -187,7 +187,7 @@ def best_ocr_result(img):
 # ==========================
 def detect_plate_region(vehicle_img):
     """Trả về crop biển số từ YOLO detector"""
-    results = lp_detector(vehicle_img)
+    results = lp_detector(vehicle_img, verbose=False)
     if len(results) == 0 or len(results[0].boxes) == 0:
         return None
 

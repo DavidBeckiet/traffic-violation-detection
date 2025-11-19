@@ -3,7 +3,7 @@ from ultralytics import YOLO
 model = YOLO("yolov8m.pt")
 
 def detect_vehicles(frame):
-    results = model(frame)
+    results = model(frame, verbose=False)
     vehicles = []
     for box in results[0].boxes:
         cls_id = int(box.cls[0])

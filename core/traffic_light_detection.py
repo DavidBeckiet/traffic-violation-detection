@@ -26,7 +26,7 @@ def detect_traffic_light(frame):
     roi = get_roi(frame)
 
     # Phát hiện bằng YOLO
-    results = traffic_light_model(roi)
+    results = traffic_light_model(roi, verbose=False)
     if len(results) > 0 and len(results[0].boxes) > 0:
         classes = results[0].boxes.cls.cpu().numpy()
         # 0: green, 1: red, 2: yellow

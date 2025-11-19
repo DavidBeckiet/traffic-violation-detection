@@ -131,6 +131,9 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                 try:
                     frame_queue.put(frame, timeout=1)
                 except queue.Full:
+                    # Nếu queue đầy, check stop_flag
+                    if stop_flag and stop_flag.is_set():
+                        break
                     pass
             cap.release()
             frame_queue.put(None)
@@ -248,6 +251,7 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                         "history": [],
                         "plate": None,
                         "province": None,
+                        "plate_retry": 5,  # Retry 5 lần
                         "label": label,
                         "violated": False,
                         "entered": False,
@@ -294,9 +298,9 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                     continue
 
                 # =========================================
-                # LICENSE PLATE RECOGNITION (WITH TRACK-ID)
+                # LICENSE PLATE RECOGNITION (WITH RETRY)
                 # =========================================
-                if tr["plate"] is None:
+                if tr["plate"] is None and tr.get("plate_retry", 0) > 0:
                     try:
                         result = detect_and_read_plate(
                             frame,
@@ -304,13 +308,27 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                             track_id=track_id,
                             vehicle_label=label
                         )
-                        tr["plate"] = result.get("plate", "Unknown")
-                        tr["province"] = result.get("province", "Unknown")
+                        detected_plate = result.get("plate", "Unknown")
+                        detected_province = result.get("province", "Unknown")
+                        
+                        # Nếu nhận diện được biển hợp lệ → lưu luôn
+                        if detected_plate and detected_plate != "Unknown":
+                            tr["plate"] = detected_plate
+                            tr["province"] = detected_province
+                        else:
+                            # Chưa rõ → giảm retry
+                            tr["plate_retry"] -= 1
+                            # Hết retry → gán Unknown
+                            if tr["plate_retry"] == 0:
+                                tr["plate"] = "Unknown"
+                                tr["province"] = "Unknown"
                     except:
-                        tr["plate"] = "Unknown"
-                        tr["province"] = "Unknown"
+                        tr["plate_retry"] -= 1
+                        if tr["plate_retry"] == 0:
+                            tr["plate"] = "Unknown"
+                            tr["province"] = "Unknown"
 
-                plate = tr["plate"]
+                plate = tr.get("plate", "Unknown")
                 province = tr.get("province", "Unknown")
 
                 # ROI ENTER
