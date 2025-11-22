@@ -317,8 +317,8 @@ with tab_history:
         # Lọc chỉ các record có file ảnh tồn tại
         valid_records = []
         for r in records:
-            crop_exists = os.path.exists(r.get("crop_image", ""))
-            context_exists = os.path.exists(r.get("context_image", ""))
+            crop_exists = os.path.exists(os.path.join(ROOT_DIR, r["crop_image"]))
+            context_exists = os.path.exists(os.path.join(ROOT_DIR, r["context_image"]))
             if crop_exists and context_exists:
                 valid_records.append(r)
 
@@ -327,10 +327,7 @@ with tab_history:
         else:
             st.success(f"Tìm thấy {len(valid_records)}/{len(records)} vi phạm hợp lệ")
 
-            # Bảng dữ liệu
-            st.markdown("### 📋 Bảng dữ liệu")
-            df = pd.DataFrame(valid_records)
-            st.dataframe(df, use_container_width=True)
+            
 
             # JSON raw
             with st.expander("📄 Xem JSON"):
@@ -348,9 +345,11 @@ with tab_history:
 
                 cols = st.columns(2)
                 with cols[0]:
-                    st.image(r["crop_image"], caption="📍 Xe vi phạm", use_container_width=True)
+                    full_crop_path = os.path.join(ROOT_DIR, r["crop_image"])
+                    st.image(full_crop_path, caption="📍 Xe vi phạm", use_container_width=True)
                 with cols[1]:
-                    st.image(r["context_image"], caption="📷 Toàn cảnh", use_container_width=True)
+                    full_context_path = os.path.join(ROOT_DIR, r["context_image"])
+                    st.image(full_context_path, caption="📷 Toàn cảnh", use_container_width=True)
 
             st.markdown("---")
             st.download_button(

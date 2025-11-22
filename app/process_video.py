@@ -378,6 +378,11 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
                         cv2.imwrite(context_path, ctx)
 
+                        # ========= RELATIVE PATH =========
+                        rel_crop = os.path.relpath(crop_path, PROJECT_ROOT)
+                        rel_context = os.path.relpath(context_path, PROJECT_ROOT)
+                        # ==================================
+
                     record = {
                         "video": video_name,
                         "track_id": track_id,
@@ -385,8 +390,8 @@ def process_video(video_path, display=False, frame_callback=None, save_output=Tr
                         "license_plate": plate,
                         "province": province,
                         "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-                        "crop_image": crop_path,
-                        "context_image": context_path
+                        "crop_image": rel_crop,
+                        "context_image": rel_context
                     }
                     save_violation_record(record)
 
