@@ -45,48 +45,6 @@ Dự án được xây dựng nhằm tự động giám sát giao thông và ph�
 
 Hệ thống hoạt động theo thời gian thực, hỗ trợ FullHD và có thể triển khai tại các nút giao thông.
 
-📁 Cấu trúc thư mục
-Nhom3_Nhan dien bien so xe vuot den do/
-│
-├── .venv/                                  # Môi trường ảo Python
-│
-├── app/                                    # Ứng dụng chính (GUI + xử lý video)
-│   ├── __pycache__/
-│   ├── __init__.py
-│   ├── gui_app.py                          # Ứng dụng giao diện Streamlit
-│   ├── process_video.py                    # Pipeline phân tích video chính
-│   ├── ui_components.py                    # Các component UI dùng trong GUI
-│
-├── config/
-│   ├── video_zones.json                    # ROI + stop-line cho từng video
-│
-├── core/                                   # Các mô-đun xử lý chính
-│   ├── __pycache__/
-│   ├── license_plate_recognition.py        # OCR biển số bằng PaddleOCR
-│   ├── traffic_light_detection.py          # Nhận diện đèn giao thông
-│   ├── utils.py                            # Các hàm hỗ trợ
-│   ├── vehicle_detection.py                # Nhận diện phương tiện bằng YOLO
-│   ├── violation_checker.py                # Kiểm tra logic vượt đèn đỏ
-│
-├── models/                                 # Các mô hình AI
-│   ├── license_plate/                      # Các file mô hình LP (nếu có)
-│   ├── traffic_light/                      # Mô hình nhận diện đèn giao thông
-│   ├── vehicle/                            # YOLO detect phương tiện
-│   └── yolov8m.pt                          # File YOLOv8 dùng để detect xe
-│
-├── output/                                 # Thư mục xuất kết quả
-│   ├── uploads/                            # Video người dùng upload
-│   ├── violations/                         # Ảnh crop + context + log vi phạm
-│
-├── utils/                                  # (Có thể bạn muốn dùng hoặc xoá)
-│
-├── .gitignore                              # Loại trừ file khi push Git
-├── HDSD.md                                 # Hướng dẫn sử dụng (nếu có)
-├── README.md                               # Mô tả dự án
-├── requirements.txt                        # Danh sách thư viện cần thiết
-└── yolov8m.pt                              # (Phiên bản khác của mô hình?)
-
-
 🚀 Cài đặt môi trường
 1️⃣ Tạo môi trường Python (khuyến nghị 3.12.6)
 python -m venv venv
